@@ -1,0 +1,32 @@
+# Beispiel-Dienst hinter Traefik.
+#
+# Start (aus diesem Verzeichnis; liest DEV_HTTPS_DOMAIN aus der .env im
+# Projektwurzelverzeichnis):
+#   docker compose --env-file ../../.env up -d
+#
+# Danach erreichbar unter https://whoami.<DEV_HTTPS_DOMAIN>
+# - vom Browser auf dem Host (Entrypoint websecure)
+# - aus anderen Containern  (Entrypoint devsecure)
+
+services:
+  whoami:
+    image: traefik/whoami:latest
+    container_name: whoami
+    restart: unless-stopped
+
+    labels:
+      - "traefik.enable=true"
+
+      # Router: an beiden Entrypoints, damit Browser UND andere Container den
+      # Dienst erreichen. Nur fuer den Browser: "entrypoints=websecure"
+      # (oder die Zeile weglassen - websecure ist Default).
+      - "traefik.http.routers.whoami.rule=Host(`whoami.${DEV_HTTPS_DOMAIN:?DEV_HTTPS_DOMAIN fehlt - mit --env-file ../../.env starten}`)"
+      - "traefik.http.routers.whoami.entrypoints=websecure,devsecure"
+      - "traefik.http.routers.whoami.tls=true"
+      - "traefik.http.routers.whoami.tls.certresolver=letsencrypt"
+
+      # Port, auf dem der Dienst IM Container lauscht.
+      - "traefik.http.services.whoami.loadbalancer.server.port=80"
+
+    # Kein gemeinsames Netz mit Traefik noetig: Traefik laeuft im Host-Netz
+    # und erreicht den Container ueber dessen Bridge-IP.

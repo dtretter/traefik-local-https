@@ -1,0 +1,13 @@
+# Zugangsdaten - niemals einchecken
+.env
+.env.*
+!.env.example
+
+# Zertifikate und private Schluessel (Traefik ACME-Speicher)
+letsencrypt/*
+!letsencrypt/.gitkeep
+
+# Lokale Sicherungen
+*.backup
+*.bak
+*.orig

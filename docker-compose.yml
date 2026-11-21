@@ -1,0 +1,146 @@
+# Lokale HTTPS-Entwicklungsumgebung: Traefik + Wildcard-DNS fuer Host und
+# Container. Alle Werte kommen aus .env (Vorlage: .env.example).
+# Anleitung: README.md
+
+services:
+  traefik:
+    image: traefik:v3.7
+    container_name: traefik
+    restart: unless-stopped
+
+    # Host-Netz statt Port-Mapping + externem Netz "traefik": Traefik erreicht
+    # so die Bridge-IPs aller Container (auch von Devcontainern) direkt, und
+    # die Entrypoints koennen an einzelne Host-Adressen gebunden werden.
+    network_mode: host
+
+    # Enthaelt die Zugangsdaten fuer den DNS-Provider (ACME DNS-01-Challenge).
+    env_file:
+      - .env
+
+    command:
+      - "--log.level=INFO"
+      - "--api.dashboard=true"
+
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+
+      # HTTP nur lokal bzw. fuer Container, jeweils Weiterleitung auf HTTPS.
+      # Bewusst nicht ":80", sonst waere der Port im LAN/WLAN offen.
+      - "--entrypoints.web.address=127.0.0.1:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.devweb.address=${HOST_GATEWAY_IP:-172.17.0.1}:80"
+      - "--entrypoints.devweb.http.redirections.entrypoint.to=devsecure"
+      - "--entrypoints.devweb.http.redirections.entrypoint.scheme=https"
+
+      # Browser auf dem Host (host-dns: *.<domain> -> 127.0.0.1).
+      # asDefault: Router ohne eigene entrypoints-Angabe landen NUR hier,
+      # nie versehentlich auf devsecure.
+      - "--entrypoints.websecure.address=127.0.0.1:443"
+      - "--entrypoints.websecure.asDefault=true"
+
+      # Container -> Host (container-dns: *.<domain> -> HOST_GATEWAY_IP).
+      # Hier haengen nur Dienste, die das ausdruecklich per Label angeben;
+      # alles andere ist aus Containern nicht erreichbar.
+      - "--entrypoints.devsecure.address=${HOST_GATEWAY_IP:-172.17.0.1}:443"
+
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?ACME_EMAIL muss in .env gesetzt sein}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+
+      # DNS-01: funktioniert ohne oeffentlich erreichbaren Server und liefert
+      # Wildcard-Zertifikate. Provider-Namen und benoetigte Variablen:
+      # https://doc.traefik.io/traefik/https/acme/#providers
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=${ACME_DNS_PROVIDER:?ACME_DNS_PROVIDER muss in .env gesetzt sein}"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.propagation.delaybeforechecks=30s"
+
+    volumes:
+      # :ro schuetzt nur die Socket-Datei, nicht die Docker-API (siehe README).
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./letsencrypt:/letsencrypt"
+
+    labels:
+      - "traefik.enable=true"
+
+      # Dashboard bewusst nur an websecure - aus Containern nicht erreichbar.
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${DEV_HTTPS_DOMAIN:?DEV_HTTPS_DOMAIN muss in .env gesetzt sein}`)"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.tls=true"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+
+      # Wildcard-Zertifikat zentral anfordern
+      - "traefik.http.routers.traefik.tls.domains[0].main=${DEV_HTTPS_DOMAIN}"
+      - "traefik.http.routers.traefik.tls.domains[0].sans=*.${DEV_HTTPS_DOMAIN}"
+
+      - "traefik.http.routers.traefik.service=api@internal"
+
+      # Pflichtangabe im Host-Netz: Ohne veroeffentlichte Ports findet der
+      # Docker-Provider fuer den automatisch angelegten Service keinen Port
+      # ("port is missing") und verwirft ALLE Labels dieses Containers - samt
+      # Dashboard-Router und Wildcard-Anforderung. Der Service selbst bleibt
+      # ungenutzt (der Router zeigt auf api@internal).
+      - "traefik.http.services.traefik.loadbalancer.server.port=443"
+
+  # Zwei dnsmasq-Instanzen, weil Host und Container fuer dieselben Namen
+  # unterschiedliche Antworten brauchen (dnsmasq kennt keine Views):
+  #   host-dns      127.0.0.1:5354        *.<domain> -> 127.0.0.1       (websecure)
+  #   container-dns HOST_GATEWAY_IP:53    *.<domain> -> HOST_GATEWAY_IP (devsecure)
+  # Beide nutzen dasselbe Image (gebaut ueber container-dns).
+
+  # Wildcard-DNS fuer den Host (Browser): systemd-resolved leitet *.<domain>
+  # per Drop-in hierher weiter (eingerichtet von scripts/setup-host.sh):
+  #   /etc/systemd/resolved.conf.d/local-dev-dns.conf
+  #     [Resolve]
+  #     DNS=127.0.0.1:5354
+  #     Domains=~<domain>
+  # Kein Upstream: Fremde Namen werden abgelehnt, die loest resolved selbst.
+  host-dns:
+    image: local-dev-dnsmasq:local
+    pull_policy: never
+    container_name: host-dns
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - container-dns
+    command:
+      - "dnsmasq"
+      - "--keep-in-foreground"
+      - "--log-facility=-"
+      - "--no-hosts"
+      - "--no-resolv"
+      - "--bind-interfaces"
+      - "--listen-address=127.0.0.1"
+      - "--port=5354"
+      - "--address=/${DEV_HTTPS_DOMAIN:?DEV_HTTPS_DOMAIN muss in .env gesetzt sein}/127.0.0.1"
+
+  # Wildcard-DNS fuer Container: *.<domain> -> HOST_GATEWAY_IP (= Traefik
+  # devsecure), alle anderen Namen an den Resolver des Hosts. Global fuer alle
+  # Container eingetragen in /etc/docker/daemon.json ("dns": [HOST_GATEWAY_IP],
+  # eingerichtet von scripts/setup-host.sh); einzelne Compose-Files brauchen
+  # kein `dns:`. host-dns taugt dafuer nicht: Er antwortet mit 127.0.0.1, und
+  # Docker-DNS erlaubt nur Port 53.
+  # traefik, host-dns und container-dns laufen im Host-Netz und haengen
+  # deshalb nicht von diesem Eintrag ab.
+  container-dns:
+    image: local-dev-dnsmasq:local
+    build:
+      # Host-Netz beim Bauen: daemon.json setzt "dns" auf diesen Dienst
+      # selbst - ohne das koennte das Image nicht gebaut werden, solange
+      # container-dns nicht laeuft (apk braucht DNS).
+      network: host
+      dockerfile_inline: |
+        FROM alpine:3.22
+        RUN apk add --no-cache dnsmasq
+    container_name: container-dns
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - "dnsmasq"
+      - "--keep-in-foreground"
+      - "--log-facility=-"
+      - "--no-hosts"
+      - "--no-resolv"
+      - "--bind-interfaces"
+      - "--listen-address=${HOST_GATEWAY_IP:-172.17.0.1}"
+      - "--address=/${DEV_HTTPS_DOMAIN:?DEV_HTTPS_DOMAIN muss in .env gesetzt sein}/${HOST_GATEWAY_IP:-172.17.0.1}"
+      - "--server=${HOST_DNS_UPSTREAM:-127.0.0.53}"
