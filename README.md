@@ -116,10 +116,10 @@ Auf dem Host selbst wird nur zweierlei konfiguriert (per Skript):
 Der Ort ist beliebig, z.B.:
 
 ```bash
-git clone https://github.com/<user>/<repo>.git ~/local-dev-traefik
+git clone https://github.com/dtretter/traefik-local-https.git ~/traefik-local-https
 ```
 ```bash
-cd ~/local-dev-traefik
+cd ~/traefik-local-https
 ```
 
 ### 2. Adresse der Docker-Bridge ermitteln
