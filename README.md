@@ -27,6 +27,7 @@ Compose-File. Ein neuer Dienst braucht nur ein paar Traefik-Labels.
 6. [Fehlersuche](#fehlersuche)
 7. [Deinstallation](#deinstallation)
 8. [Dateien im Repository](#dateien-im-repository)
+9. [Lizenz](#lizenz)
 
 ---
 
@@ -426,3 +427,11 @@ docker image rm local-dev-dnsmasq:local
 | `scripts/setup-host.sh` | Host-Konfiguration einrichten/entfernen |
 | `examples/whoami/` | Beispiel-Dienst mit Labels für beide Entrypoints |
 | `letsencrypt/` | Ablage für `acme.json` (Inhalt nicht im Repository) |
+| `LICENSE` | MIT-Lizenz |
+
+---
+
+## Lizenz
+
+[MIT](LICENSE) – Nutzung auf eigene Verantwortung. Das Setup-Skript ändert
+Systemdateien; vorher mit `--dry-run` prüfen.
