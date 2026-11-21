@@ -144,3 +144,8 @@ services:
       - "--listen-address=${HOST_GATEWAY_IP:-172.17.0.1}"
       - "--address=/${DEV_HTTPS_DOMAIN:?DEV_HTTPS_DOMAIN muss in .env gesetzt sein}/${HOST_GATEWAY_IP:-172.17.0.1}"
       - "--server=${HOST_DNS_UPSTREAM:-127.0.0.53}"
+      # Kein eigener Cache: systemd-resolved cacht bereits und verwirft seinen
+      # Cache bei Netzwechseln (VPN an/aus). dnsmasq wuerde sonst z. B. ein
+      # NXDOMAIN fuer VPN-Namen aus einer Phase ohne VPN bis zur SOA-TTL
+      # festhalten (tripledigital.de: 7 Tage) - fuer alle Container.
+      - "--cache-size=0"
