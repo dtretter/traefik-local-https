@@ -11,3 +11,4 @@ letsencrypt/*
 *.backup
 *.bak
 *.orig
+/.idea/
